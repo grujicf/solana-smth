@@ -8,9 +8,13 @@ import (
 	skyline_program "solsdk/generated"
 	"time"
 
-	bin "github.com/gagliardetto/binary"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/gagliardetto/solana-go/rpc/ws"
+
+	associatedtokenaccount "github.com/gagliardetto/solana-go/programs/associated-token-account"
+	"github.com/gagliardetto/solana-go/programs/system"
+	"github.com/gagliardetto/solana-go/programs/token"
 )
 
 func StartTestNode() (*exec.Cmd, error) {
@@ -81,6 +85,135 @@ func Deploy(feePayer string, programKey string, buildPath string) error {
 	return cmd.Wait()
 }
 
+func CreateTokenAccount(cli *rpc.Client, wsCli *ws.Client, pk solana.PrivateKey) (*solana.PublicKey, error) {
+	tokenPk, err := solana.NewRandomPrivateKey()
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	block, err := cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	rent, err := cli.GetMinimumBalanceForRentExemption(context.Background(), token.MINT_SIZE, rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	caIx := system.NewCreateAccountInstruction(rent+1, uint64(token.MINT_SIZE), token.ProgramID, pk.PublicKey(), tokenPk.PublicKey()).Build()
+
+	mintIx := token.NewInitializeMint2Instruction(9, pk.PublicKey(), pk.PublicKey(), tokenPk.PublicKey())
+	mintTx, err := solana.NewTransactionBuilder().AddInstruction(caIx).AddInstruction(mintIx.Build()).SetFeePayer(pk.PublicKey()).SetRecentBlockHash(block.Value.Blockhash).Build()
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	_, err = mintTx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		if key.Equals(pk.PublicKey()) {
+			return &pk
+		}
+		if key.Equals(tokenPk.PublicKey()) {
+			return &tokenPk
+		}
+		return nil
+	})
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	sigMint, err := cli.SendTransaction(context.TODO(), mintTx)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	subMint, err := wsCli.SignatureSubscribe(sigMint, rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println("Subscription error:", err)
+		return nil, err
+	}
+
+	rd := <-subMint.Response()
+	if rd.Value.Err != nil {
+		fmt.Println("Transaction failed:", rd.Value.Err)
+		return nil, err
+	}
+
+	ret := tokenPk.PublicKey()
+	return &ret, nil
+}
+
+func MintToAccount(cli *rpc.Client, wsCli *ws.Client, pk solana.PrivateKey, receiver solana.PublicKey, mint solana.PublicKey) (ata solana.PublicKey, err error) {
+	ata, _, err = solana.FindAssociatedTokenAddress(receiver, mint)
+	if err != nil {
+		return
+	}
+
+	var instructions []solana.Instruction
+
+	ataInfo, err := cli.GetAccountInfo(context.Background(), ata)
+	if err != nil || ataInfo.Value == nil {
+		ataIx := associatedtokenaccount.NewCreateInstruction(
+			pk.PublicKey(),
+			receiver,
+			mint,
+		).Build()
+		instructions = append(instructions, ataIx)
+	}
+
+	mintToIx := token.NewMintToInstruction(1_000_000_000, mint, ata, pk.PublicKey(), []solana.PublicKey{}).Build()
+	instructions = append(instructions, mintToIx)
+
+	blockhash, err := cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
+	if err != nil {
+		return
+	}
+
+	builder := solana.NewTransactionBuilder().SetRecentBlockHash(blockhash.Value.Blockhash).SetFeePayer(pk.PublicKey())
+	for _, ix := range instructions {
+		builder.AddInstruction(ix)
+	}
+
+	tx, err := builder.Build()
+	if err != nil {
+		return
+	}
+
+	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		if key.Equals(pk.PublicKey()) {
+			return &pk
+		}
+		return nil
+	})
+	if err != nil {
+		return
+	}
+
+	sig, err := cli.SendTransaction(context.TODO(), tx)
+	if err != nil {
+		return
+	}
+
+	sub, err := wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
+	if err != nil {
+		return
+	}
+
+	result := <-sub.Response()
+	if result.Value.Err != nil {
+		err = fmt.Errorf("mint to account transaction failed: %v", result.Value.Err)
+		return
+	}
+
+	return
+}
+
 func main() {
 	cmd, err := StartTestNode()
 	if err != nil {
@@ -96,6 +229,13 @@ func main() {
 		fmt.Println(err)
 		return
 	}
+
+	wsCli, err := ws.Connect(context.Background(), "ws://127.0.0.1:8900")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer wsCli.Close()
 
 	if err := Airdrop("./test.json"); err != nil {
 		fmt.Println(err)
@@ -204,15 +344,22 @@ func main() {
 		return
 	}
 
-	_, err = cli.SendTransactionWithOpts(context.TODO(), tx, rpc.TransactionOpts{
-		PreflightCommitment: rpc.CommitmentFinalized,
-	})
+	sig, err := cli.SendTransaction(context.TODO(), tx)
 	if err != nil {
 		fmt.Println("OVDE JE GRESKA MJAU:", err)
 		return
 	}
+	sub, err := wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println("Subscription error:", err)
+		return
+	}
 
-	time.Sleep(time.Second * 20)
+	result := <-sub.Response()
+	if result.Value.Err != nil {
+		fmt.Println("Transaction failed:", result.Value.Err)
+		return
+	}
 
 	resp, err := cli.GetAccountInfo(context.TODO(), pdaVS)
 	if err != nil {
@@ -221,13 +368,9 @@ func main() {
 	}
 
 	rdd := &skyline_program.ValidatorSet{}
-
-	borshDec := bin.NewBorshDecoder(resp.GetBinary())
-	err = borshDec.Decode(&rdd)
-	if err != nil {
-		panic(err)
+	if rdd.Unmarshal(resp.GetBinary()[8:]) != nil {
+		panic("PANICIM")
 	}
-
 	fmt.Println("Na kontraktu:")
 	for i, v := range rdd.Signers {
 		fmt.Println(i, ":", v)
@@ -237,6 +380,29 @@ func main() {
 	for i, v := range valsPKs {
 		fmt.Println(i, ":", v)
 	}
+
+	mint, err := CreateTokenAccount(cli, wsCli, pk)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println("Created token account:", mint)
+
+	ata, err := MintToAccount(cli, wsCli, pk, pdaVault, *mint)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	balance, err := cli.GetTokenAccountBalance(context.Background(), ata, rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println("Vault ATA:", ata)
+	fmt.Println("Vault balance:", balance.Value.Amount)
 
 	//fmt.Println(rd)
 }
