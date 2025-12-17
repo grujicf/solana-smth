@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -404,5 +407,104 @@ func main() {
 	fmt.Println("Vault ATA:", ata)
 	fmt.Println("Vault balance:", balance.Value.Amount)
 
-	//fmt.Println(rd)
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, 2)
+	fmt.Println("BUF", buf)
+
+	pdaBridgingTx, _, err := solana.FindProgramAddress([][]byte{skyline_program.BRIDGING_TRANSACTION_SEED, buf}, skyline_program.ProgramID)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	pera := solana.NewWallet()
+	perinAta, _, err := solana.FindAssociatedTokenAddress(pera.PublicKey(), *mint)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	ins, err := skyline_program.NewBridgeTransactionInstruction(1_000,
+		2,
+		pk.PublicKey(),
+		pdaVS,
+		pdaBridgingTx,
+		*mint,
+		pera.PublicKey(),
+		perinAta,
+		pdaVault,
+		ata,
+		solana.TokenProgramID,
+		solana.SystemProgramID,
+		solana.SPLAssociatedTokenAccountProgramID,
+	)
+
+	blockhash, err := cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	builder := solana.NewTransactionBuilder().SetRecentBlockHash(blockhash.Value.Blockhash).SetFeePayer(pk.PublicKey()).AddInstruction(ins)
+
+	tx, err = builder.Build()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	signers := map[solana.PublicKey]*solana.PrivateKey{}
+
+	// fee payer
+	signers[pk.PublicKey()] = &pk
+
+	// validatori
+	for _, v := range vals {
+		signers[v.PublicKey()] = &v.PrivateKey
+	}
+
+	mshSer, err := tx.Message.MarshalBinary()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	hash := sha256.Sum256(mshSer)
+
+	fmt.Println("SHA256:", hex.EncodeToString(hash[:]))
+
+	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		return signers[key]
+	})
+	if err != nil {
+		fmt.Println("POTPIS FAIL", err)
+		return
+	}
+
+	sig, err = cli.SendTransaction(context.TODO(), tx)
+	if err != nil {
+		fmt.Println("MJAU1", err)
+		return
+	}
+
+	sub, err = wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println("MJAU2", err)
+		return
+	}
+
+	result = <-sub.Response()
+	if result.Value.Err != nil {
+		err = fmt.Errorf("send tx failed: %v", result.Value.Err)
+		return
+	}
+
+	balance, err = cli.GetTokenAccountBalance(context.Background(), perinAta, rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println("Vault ATA:", perinAta)
+	fmt.Println("Vault balance:", balance.Value.Amount)
+
 }
