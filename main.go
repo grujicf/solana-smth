@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	skyline_program "solsdk/generated"
+	"strings"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
@@ -218,6 +220,9 @@ func MintToAccount(cli *rpc.Client, wsCli *ws.Client, pk solana.PrivateKey, rece
 }
 
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	cmd, err := StartTestNode()
 	if err != nil {
 		fmt.Println(err)
@@ -233,7 +238,7 @@ func main() {
 		return
 	}
 
-	wsCli, err := ws.Connect(context.Background(), "ws://127.0.0.1:8900")
+	wsCli, err := ws.Connect(ctx, "ws://127.0.0.1:8900")
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -265,6 +270,50 @@ func main() {
 	}
 
 	time.Sleep(time.Second * 20)
+
+	sub1, err := wsCli.LogsSubscribeMentions(skyline_program.ProgramID, rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println("MJAU3", err)
+		return
+	}
+	defer sub1.Unsubscribe()
+
+	go func() {
+		for {
+			select {
+			case res := <-sub1.Response():
+				for _, log := range res.Value.Logs {
+					if !strings.Contains(log, "Program data: ") {
+						continue
+					}
+
+					decoded, err := base64.RawStdEncoding.DecodeString(log[14:])
+					if err != nil {
+						fmt.Println("Failed to decode log:", err)
+						continue
+					}
+
+					ret, err := skyline_program.ParseAnyEvent(decoded)
+					if err != nil {
+						fmt.Println("Failed to parse event:", err)
+						continue
+					}
+
+					fmt.Printf("Parsed event: %+v\n", ret)
+					switch e := ret.(type) {
+					case *skyline_program.TransactionExecutedEvent:
+						fmt.Println("TransactionExecutedEvent:", e.TransactionId, e.BatchId)
+					case *skyline_program.ValidatorSetUpdatedEvent:
+						fmt.Println("ValidatorSetUpdatedEvent:", e)
+					default:
+						fmt.Println("Unknown event type")
+					}
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	programPk, err := solana.PrivateKeyFromSolanaKeygenFile("./skyline_program-keypair.json")
 	if err != nil {
@@ -398,7 +447,7 @@ func main() {
 		return
 	}
 
-	balance, err := cli.GetTokenAccountBalance(context.Background(), ata, rpc.CommitmentFinalized)
+	balance, err := cli.GetTokenAccountBalance(ctx, ata, rpc.CommitmentFinalized)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -439,13 +488,35 @@ func main() {
 		solana.SPLAssociatedTokenAccountProgramID,
 	)
 
+	var accounts []*solana.AccountMeta
+	accounts = append(accounts, ins.Accounts()...)
+	for _, v := range vals {
+		accounts = append(accounts, &solana.AccountMeta{
+			PublicKey:  v.PublicKey(),
+			IsSigner:   true,
+			IsWritable: false,
+		})
+	}
+
+	data, err := ins.Data()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	ix := solana.NewInstruction(skyline_program.ProgramID, accounts, data)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
 	blockhash, err := cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	builder := solana.NewTransactionBuilder().SetRecentBlockHash(blockhash.Value.Blockhash).SetFeePayer(pk.PublicKey()).AddInstruction(ins)
+	builder := solana.NewTransactionBuilder().SetRecentBlockHash(blockhash.Value.Blockhash).SetFeePayer(pk.PublicKey()).AddInstruction(ix)
 
 	tx, err = builder.Build()
 	if err != nil {
@@ -491,6 +562,7 @@ func main() {
 		fmt.Println("MJAU2", err)
 		return
 	}
+	defer sub.Unsubscribe()
 
 	result = <-sub.Response()
 	if result.Value.Err != nil {
@@ -498,7 +570,7 @@ func main() {
 		return
 	}
 
-	balance, err = cli.GetTokenAccountBalance(context.Background(), perinAta, rpc.CommitmentFinalized)
+	balance, err = cli.GetTokenAccountBalance(ctx, perinAta, rpc.CommitmentFinalized)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -506,5 +578,5 @@ func main() {
 
 	fmt.Println("Vault ATA:", perinAta)
 	fmt.Println("Vault balance:", balance.Value.Amount)
-
+	time.Sleep(10 * time.Second)
 }
