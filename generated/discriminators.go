@@ -5,7 +5,6 @@ package skyline_program
 
 // Account discriminators
 var (
-	Account_BridgingRequest     = [8]byte{15, 162, 57, 90, 131, 236, 93, 38}
 	Account_BridgingTransaction = [8]byte{199, 172, 160, 246, 169, 105, 182, 43}
 	Account_ValidatorDelta      = [8]byte{78, 60, 235, 203, 202, 134, 2, 124}
 	Account_ValidatorSet        = [8]byte{35, 206, 97, 202, 43, 11, 11, 127}
@@ -14,6 +13,7 @@ var (
 
 // Event discriminators
 var (
+	Event_BridgeRequestEvent       = [8]byte{162, 122, 193, 76, 126, 59, 162, 143}
 	Event_TransactionExecutedEvent = [8]byte{138, 185, 121, 218, 65, 145, 254, 24}
 	Event_ValidatorSetUpdatedEvent = [8]byte{92, 126, 111, 2, 195, 25, 244, 136}
 )
@@ -23,6 +23,5 @@ var (
 	Instruction_BridgeRequest     = [8]byte{174, 128, 16, 189, 59, 127, 134, 232}
 	Instruction_BridgeTransaction = [8]byte{73, 26, 119, 117, 56, 168, 209, 98}
 	Instruction_BridgeVsu         = [8]byte{251, 55, 181, 69, 163, 28, 202, 10}
-	Instruction_CloseRequest      = [8]byte{170, 46, 165, 120, 223, 102, 115, 2}
 	Instruction_Initialize        = [8]byte{175, 175, 109, 31, 13, 152, 155, 237}
 )

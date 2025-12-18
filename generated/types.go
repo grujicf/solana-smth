@@ -11,23 +11,7 @@ import (
 	solanago "github.com/gagliardetto/solana-go"
 )
 
-// Represents a cross-chain bridging request.
-//
-// The `BridgingRequest` account is created when a user initiates a cross-chain
-// token transfer. It contains all the information needed to process the transfer
-// on the destination chain, including the amount, recipient, and destination chain ID.
-//
-// This account is created per transfer request and can be closed after the
-// transfer is completed or cancelled.
-//
-// # Fields
-//
-// * `sender` - Public key of the user initiating the bridge request
-// * `amount` - Amount of tokens to be bridged
-// * `receiver` - Receiver's address on the destination chain (57 bytes)
-// * `destination_chain` - Chain ID of the destination blockchain
-// * `mint_token` - Public key of the token mint being bridged
-type BridgingRequest struct {
+type BridgeRequestEvent struct {
 	// Public key of the user who initiated the bridge request
 	Sender solanago.PublicKey `json:"sender"`
 
@@ -36,16 +20,19 @@ type BridgingRequest struct {
 
 	// Receiver's address on the destination chain (fixed 57-byte array)
 	// This format accommodates various address formats across different blockchains
-	Receiver [57]uint8 `json:"receiver"`
+	Receiver []byte `json:"receiver"`
 
 	// Chain ID identifying the destination blockchain network
 	DestinationChain uint8 `json:"destinationChain"`
 
 	// Public key of the token mint being bridged
 	MintToken solanago.PublicKey `json:"mintToken"`
+
+	// The batch request ID associated with this bridge request
+	BatchRequestId uint64 `json:"batchRequestId"`
 }
 
-func (obj BridgingRequest) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
+func (obj BridgeRequestEvent) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
 	// Serialize `Sender`:
 	err = encoder.Encode(obj.Sender)
 	if err != nil {
@@ -71,20 +58,25 @@ func (obj BridgingRequest) MarshalWithEncoder(encoder *binary.Encoder) (err erro
 	if err != nil {
 		return errors.NewField("MintToken", err)
 	}
+	// Serialize `BatchRequestId`:
+	err = encoder.Encode(obj.BatchRequestId)
+	if err != nil {
+		return errors.NewField("BatchRequestId", err)
+	}
 	return nil
 }
 
-func (obj BridgingRequest) Marshal() ([]byte, error) {
+func (obj BridgeRequestEvent) Marshal() ([]byte, error) {
 	buf := bytes.NewBuffer(nil)
 	encoder := binary.NewBorshEncoder(buf)
 	err := obj.MarshalWithEncoder(encoder)
 	if err != nil {
-		return nil, fmt.Errorf("error while encoding BridgingRequest: %w", err)
+		return nil, fmt.Errorf("error while encoding BridgeRequestEvent: %w", err)
 	}
 	return buf.Bytes(), nil
 }
 
-func (obj *BridgingRequest) UnmarshalWithDecoder(decoder *binary.Decoder) (err error) {
+func (obj *BridgeRequestEvent) UnmarshalWithDecoder(decoder *binary.Decoder) (err error) {
 	// Deserialize `Sender`:
 	err = decoder.Decode(&obj.Sender)
 	if err != nil {
@@ -110,19 +102,24 @@ func (obj *BridgingRequest) UnmarshalWithDecoder(decoder *binary.Decoder) (err e
 	if err != nil {
 		return errors.NewField("MintToken", err)
 	}
-	return nil
-}
-
-func (obj *BridgingRequest) Unmarshal(buf []byte) error {
-	err := obj.UnmarshalWithDecoder(binary.NewBorshDecoder(buf))
+	// Deserialize `BatchRequestId`:
+	err = decoder.Decode(&obj.BatchRequestId)
 	if err != nil {
-		return fmt.Errorf("error while unmarshaling BridgingRequest: %w", err)
+		return errors.NewField("BatchRequestId", err)
 	}
 	return nil
 }
 
-func UnmarshalBridgingRequest(buf []byte) (*BridgingRequest, error) {
-	obj := new(BridgingRequest)
+func (obj *BridgeRequestEvent) Unmarshal(buf []byte) error {
+	err := obj.UnmarshalWithDecoder(binary.NewBorshDecoder(buf))
+	if err != nil {
+		return fmt.Errorf("error while unmarshaling BridgeRequestEvent: %w", err)
+	}
+	return nil
+}
+
+func UnmarshalBridgeRequestEvent(buf []byte) (*BridgeRequestEvent, error) {
+	obj := new(BridgeRequestEvent)
 	err := obj.Unmarshal(buf)
 	if err != nil {
 		return nil, err
@@ -470,6 +467,9 @@ type ValidatorSet struct {
 
 	// Last batch id
 	LastBatchId uint64 `json:"lastBatchId"`
+
+	// Count of bridge requests processed
+	BridgeRequestCount uint64 `json:"bridgeRequestCount"`
 }
 
 func (obj ValidatorSet) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
@@ -492,6 +492,11 @@ func (obj ValidatorSet) MarshalWithEncoder(encoder *binary.Encoder) (err error) 
 	err = encoder.Encode(obj.LastBatchId)
 	if err != nil {
 		return errors.NewField("LastBatchId", err)
+	}
+	// Serialize `BridgeRequestCount`:
+	err = encoder.Encode(obj.BridgeRequestCount)
+	if err != nil {
+		return errors.NewField("BridgeRequestCount", err)
 	}
 	return nil
 }
@@ -526,6 +531,11 @@ func (obj *ValidatorSet) UnmarshalWithDecoder(decoder *binary.Decoder) (err erro
 	err = decoder.Decode(&obj.LastBatchId)
 	if err != nil {
 		return errors.NewField("LastBatchId", err)
+	}
+	// Deserialize `BridgeRequestCount`:
+	err = decoder.Decode(&obj.BridgeRequestCount)
+	if err != nil {
+		return errors.NewField("BridgeRequestCount", err)
 	}
 	return nil
 }

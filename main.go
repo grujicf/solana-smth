@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	skyline_program "solsdk/generated"
@@ -90,7 +91,7 @@ func Deploy(feePayer string, programKey string, buildPath string) error {
 	return cmd.Wait()
 }
 
-func CreateTokenAccount(cli *rpc.Client, wsCli *ws.Client, pk solana.PrivateKey) (*solana.PublicKey, error) {
+func CreateTokenAccount(cli *rpc.Client, wsCli *ws.Client, pk solana.PrivateKey, mintAuthority solana.PublicKey) (*solana.PublicKey, error) {
 	tokenPk, err := solana.NewRandomPrivateKey()
 	if err != nil {
 		fmt.Println(err)
@@ -111,7 +112,7 @@ func CreateTokenAccount(cli *rpc.Client, wsCli *ws.Client, pk solana.PrivateKey)
 
 	caIx := system.NewCreateAccountInstruction(rent+1, uint64(token.MINT_SIZE), token.ProgramID, pk.PublicKey(), tokenPk.PublicKey()).Build()
 
-	mintIx := token.NewInitializeMint2Instruction(9, pk.PublicKey(), pk.PublicKey(), tokenPk.PublicKey())
+	mintIx := token.NewInitializeMint2Instruction(9, mintAuthority, mintAuthority, tokenPk.PublicKey())
 	mintTx, err := solana.NewTransactionBuilder().AddInstruction(caIx).AddInstruction(mintIx.Build()).SetFeePayer(pk.PublicKey()).SetRecentBlockHash(block.Value.Blockhash).Build()
 	if err != nil {
 		fmt.Println(err)
@@ -271,49 +272,49 @@ func main() {
 
 	time.Sleep(time.Second * 20)
 
-	sub1, err := wsCli.LogsSubscribeMentions(skyline_program.ProgramID, rpc.CommitmentFinalized)
-	if err != nil {
-		fmt.Println("MJAU3", err)
-		return
-	}
-	defer sub1.Unsubscribe()
+	// sub1, err := wsCli.LogsSubscribeMentions(skyline_program.ProgramID, rpc.CommitmentFinalized)
+	// if err != nil {
+	// 	fmt.Println("MJAU3", err)
+	// 	return
+	// }
+	// defer sub1.Unsubscribe()
 
-	go func() {
-		for {
-			select {
-			case res := <-sub1.Response():
-				for _, log := range res.Value.Logs {
-					if !strings.Contains(log, "Program data: ") {
-						continue
-					}
+	// go func() {
+	// 	for {
+	// 		select {
+	// 		case res := <-sub1.Response():
+	// 			for _, log := range res.Value.Logs {
+	// 				if !strings.Contains(log, "Program data: ") {
+	// 					continue
+	// 				}
 
-					decoded, err := base64.RawStdEncoding.DecodeString(log[14:])
-					if err != nil {
-						fmt.Println("Failed to decode log:", err)
-						continue
-					}
+	// 				decoded, err := base64.RawStdEncoding.DecodeString(log[14:])
+	// 				if err != nil {
+	// 					fmt.Println("Failed to decode log:", err)
+	// 					continue
+	// 				}
 
-					ret, err := skyline_program.ParseAnyEvent(decoded)
-					if err != nil {
-						fmt.Println("Failed to parse event:", err)
-						continue
-					}
+	// 				ret, err := skyline_program.ParseAnyEvent(decoded)
+	// 				if err != nil {
+	// 					fmt.Println("Failed to parse event:", err)
+	// 					continue
+	// 				}
 
-					fmt.Printf("Parsed event: %+v\n", ret)
-					switch e := ret.(type) {
-					case *skyline_program.TransactionExecutedEvent:
-						fmt.Println("TransactionExecutedEvent:", e.TransactionId, e.BatchId)
-					case *skyline_program.ValidatorSetUpdatedEvent:
-						fmt.Println("ValidatorSetUpdatedEvent:", e)
-					default:
-						fmt.Println("Unknown event type")
-					}
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	// 				fmt.Printf("Parsed event: %+v\n", ret)
+	// 				switch e := ret.(type) {
+	// 				case *skyline_program.TransactionExecutedEvent:
+	// 					fmt.Println("TransactionExecutedEvent:", e.TransactionId, e.BatchId)
+	// 				case *skyline_program.ValidatorSetUpdatedEvent:
+	// 					fmt.Println("ValidatorSetUpdatedEvent:", e)
+	// 				default:
+	// 					fmt.Println("Unknown event type")
+	// 				}
+	// 			}
+	// 		case <-ctx.Done():
+	// 			return
+	// 		}
+	// 	}
+	// }()
 
 	programPk, err := solana.PrivateKeyFromSolanaKeygenFile("./skyline_program-keypair.json")
 	if err != nil {
@@ -433,13 +434,13 @@ func main() {
 		fmt.Println(i, ":", v)
 	}
 
-	mint, err := CreateTokenAccount(cli, wsCli, pk)
+	mint, err := CreateTokenAccount(cli, wsCli, pk, pk.PublicKey())
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	fmt.Println("Created token account:", mint)
+	fmt.Println("Created token account:", *mint)
 
 	ata, err := MintToAccount(cli, wsCli, pk, pdaVault, *mint)
 	if err != nil {
@@ -456,8 +457,151 @@ func main() {
 	fmt.Println("Vault ATA:", ata)
 	fmt.Println("Vault balance:", balance.Value.Amount)
 
+	pera := solana.NewWallet()
+	perinAta, _, err := solana.FindAssociatedTokenAddress(pera.PublicKey(), *mint)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	for i := range 5 {
+		buf := make([]byte, 8)
+		binary.LittleEndian.PutUint64(buf, uint64(2+i))
+		fmt.Println("BUF", buf)
+
+		pdaBridgingTx, _, err := solana.FindProgramAddress([][]byte{skyline_program.BRIDGING_TRANSACTION_SEED, buf}, skyline_program.ProgramID)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		fmt.Println("Saljem request sa ID-em", 2+i)
+		ins, err := skyline_program.NewBridgeTransactionInstruction(1_000,
+			uint64(2+i),
+			pk.PublicKey(),
+			pdaVS,
+			pdaBridgingTx,
+			*mint,
+			pera.PublicKey(),
+			perinAta,
+			pdaVault,
+			ata,
+			solana.TokenProgramID,
+			solana.SystemProgramID,
+			solana.SPLAssociatedTokenAccountProgramID,
+		)
+
+		var accounts []*solana.AccountMeta
+		accounts = append(accounts, ins.Accounts()...)
+		for _, v := range vals {
+			accounts = append(accounts, &solana.AccountMeta{
+				PublicKey:  v.PublicKey(),
+				IsSigner:   true,
+				IsWritable: false,
+			})
+		}
+
+		data, err := ins.Data()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		ix := solana.NewInstruction(skyline_program.ProgramID, accounts, data)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		blockhash, err := cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		builder := solana.NewTransactionBuilder().SetRecentBlockHash(blockhash.Value.Blockhash).SetFeePayer(pk.PublicKey()).AddInstruction(ix)
+
+		tx, err = builder.Build()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		signers := map[solana.PublicKey]*solana.PrivateKey{}
+
+		// fee payer
+		signers[pk.PublicKey()] = &pk
+
+		// validatori
+		for _, v := range vals {
+			signers[v.PublicKey()] = &v.PrivateKey
+		}
+
+		mshSer, err := tx.Message.MarshalBinary()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		hash := sha256.Sum256(mshSer)
+
+		fmt.Println("SHA256:", hex.EncodeToString(hash[:]))
+
+		_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+			return signers[key]
+		})
+		if err != nil {
+			fmt.Println("POTPIS FAIL", err)
+			return
+		}
+
+		sig, err = cli.SendTransaction(context.TODO(), tx)
+		if err != nil {
+			fmt.Println("MJAU1", err)
+			return
+		}
+
+		sub, err = wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
+		if err != nil {
+			fmt.Println("MJAU2", err)
+			return
+		}
+		defer sub.Unsubscribe()
+
+		result = <-sub.Response()
+		if result.Value.Err != nil {
+			err = fmt.Errorf("send tx failed: %v", result.Value.Err)
+			return
+		}
+
+		balance, err = cli.GetTokenAccountBalance(ctx, perinAta, rpc.CommitmentFinalized)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		fmt.Println("PERIN Vault ATA:", perinAta)
+		fmt.Println("PERIN Vault balance:", balance.Value.Amount)
+		time.Sleep(2 * time.Second)
+	}
+
+	fmt.Println("DIREKTNO MINT")
+	mint2, err := CreateTokenAccount(cli, wsCli, pk, pdaVault)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println("Created token account:", *mint2)
+
+	mika := solana.NewWallet()
+	mikinAta, _, err := solana.FindAssociatedTokenAddress(mika.PublicKey(), *mint2)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
 	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, 2)
+	binary.LittleEndian.PutUint64(buf, uint64(30))
 	fmt.Println("BUF", buf)
 
 	pdaBridgingTx, _, err := solana.FindProgramAddress([][]byte{skyline_program.BRIDGING_TRANSACTION_SEED, buf}, skyline_program.ProgramID)
@@ -466,23 +610,22 @@ func main() {
 		return
 	}
 
-	pera := solana.NewWallet()
-	perinAta, _, err := solana.FindAssociatedTokenAddress(pera.PublicKey(), *mint)
+	ataMint2, _, err := solana.FindAssociatedTokenAddress(pdaVault, *mint2)
 	if err != nil {
-		fmt.Println(err)
 		return
 	}
 
-	ins, err := skyline_program.NewBridgeTransactionInstruction(1_000,
-		2,
+	fmt.Println("Saljem request sa ID-em", 30)
+	ins, err := skyline_program.NewBridgeTransactionInstruction(99_000,
+		uint64(30),
 		pk.PublicKey(),
 		pdaVS,
 		pdaBridgingTx,
-		*mint,
-		pera.PublicKey(),
-		perinAta,
+		*mint2,
+		mika.PublicKey(),
+		mikinAta,
 		pdaVault,
-		ata,
+		ataMint2,
 		solana.TokenProgramID,
 		solana.SystemProgramID,
 		solana.SPLAssociatedTokenAccountProgramID,
@@ -505,10 +648,6 @@ func main() {
 	}
 
 	ix := solana.NewInstruction(skyline_program.ProgramID, accounts, data)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
 
 	blockhash, err := cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
 	if err != nil {
@@ -570,13 +709,154 @@ func main() {
 		return
 	}
 
-	balance, err = cli.GetTokenAccountBalance(ctx, perinAta, rpc.CommitmentFinalized)
+	balance, err = cli.GetTokenAccountBalance(ctx, mikinAta, rpc.CommitmentFinalized)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	fmt.Println("Vault ATA:", perinAta)
-	fmt.Println("Vault balance:", balance.Value.Amount)
+	fmt.Println("MIKIN Vault ATA:", mikinAta)
+	fmt.Println("MIKIN Vault balance:", balance.Value.Amount)
 	time.Sleep(10 * time.Second)
+
+	f, err := os.OpenFile(
+		"output.txt",
+		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
+		0644,
+	)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	Indexer(context.TODO(), cli, f)
+}
+
+func Indexer(ctx context.Context, cli *rpc.Client, f *os.File) {
+	currentSlot := uint64(0)
+
+	fmt.Printf("Pocinje indeksiranje od slota: %d\n", currentSlot)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		fmt.Printf("Proveram slot: %v\n", currentSlot)
+
+		finalizedSlot, err := cli.GetSlot(ctx, rpc.CommitmentFinalized)
+		if err != nil {
+			fmt.Printf("Greska pri dobavljanju finalized slota: %v\n", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		if currentSlot > uint64(finalizedSlot) {
+			fmt.Printf("Stigli do vrha lanca. Cekamo finalizaciju slota %d (trenutni finalized: %d)\n",
+				currentSlot, finalizedSlot)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		fmt.Printf("Slot je finalizovan, procesiram ga.\n")
+
+		version := uint64(0)
+		block, err := cli.GetBlockWithOpts(ctx, currentSlot, &rpc.GetBlockOpts{
+			TransactionDetails:             rpc.TransactionDetailsFull,
+			MaxSupportedTransactionVersion: &version,
+		})
+
+		if block == nil {
+			log.Printf("Slot %d je prazan (skipped)\n", currentSlot)
+			currentSlot++
+			continue
+		}
+
+		log.Printf("Procesiram slot %d sa %d transakcija\n", currentSlot, len(block.Transactions))
+
+		processBlock(block, currentSlot, f)
+		currentSlot++
+
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func processBlock(block *rpc.GetBlockResult, slot uint64, f *os.File) {
+	for txIndex, tx := range block.Transactions {
+		transaction, err := tx.GetTransaction()
+		if err != nil {
+			log.Printf("Err u tx %d: %v\n", txIndex, err)
+			continue
+		}
+
+		if tx.Meta != nil && tx.Meta.Err != nil {
+			continue
+		}
+
+		message := transaction.Message
+		programWasCalled := false
+
+		for instIndex, instruction := range message.Instructions {
+			programIDIndex := instruction.ProgramIDIndex
+			instructionProgramID := message.AccountKeys[programIDIndex]
+
+			if instructionProgramID.Equals(skyline_program.ProgramID) {
+				log.Printf("Program pozvan u slot-u %d, tx %d, instrukcija %d\n",
+					slot, txIndex, instIndex)
+				programWasCalled = true
+				break
+			}
+		}
+
+		if tx.Meta != nil && tx.Meta.InnerInstructions != nil {
+			for _, innerInstGroup := range tx.Meta.InnerInstructions {
+				for _, innerInst := range innerInstGroup.Instructions {
+					innerProgramID := message.AccountKeys[innerInst.ProgramIDIndex]
+
+					if innerProgramID.Equals(skyline_program.ProgramID) {
+						log.Printf("Preko CPI-a: %d, tx %d",
+							slot, txIndex)
+						programWasCalled = true
+						break
+					}
+				}
+			}
+		}
+
+		if programWasCalled {
+			if tx.Meta != nil && len(tx.Meta.LogMessages) > 0 {
+				fmt.Println("Broj logova:", len(tx.Meta.LogMessages))
+				for _, log := range tx.Meta.LogMessages {
+					if !strings.Contains(log, "Program data: ") {
+						continue
+					}
+
+					decoded, err := base64.RawStdEncoding.DecodeString(log[14:])
+					if err != nil {
+						fmt.Println("Failed to decode log:", err)
+						continue
+					}
+
+					ret, err := skyline_program.ParseAnyEvent(decoded)
+					if err != nil {
+						fmt.Println("Failed to parse event:", err)
+						continue
+					}
+
+					fmt.Printf("Parsed event: %+v\n", ret)
+					switch e := ret.(type) {
+					case *skyline_program.TransactionExecutedEvent:
+						f.WriteString(fmt.Sprintf("Realizovan transfer batch-a sa ID-em %d\n", e.BatchId))
+					case *skyline_program.BridgeRequestEvent:
+						f.WriteString(fmt.Sprintf("Upucen je bridge request %v %v %v %v %v %v\n", e.BatchRequestId, e.Sender, e.Receiver, e.Amount, e.DestinationChain, e.MintToken))
+					case *skyline_program.ValidatorSetUpdatedEvent:
+						fmt.Println("ValidatorSetUpdatedEvent:", e)
+					default:
+						fmt.Println("Unknown event type")
+					}
+				}
+			}
+		}
+	}
 }

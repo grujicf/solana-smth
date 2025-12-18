@@ -5,4 +5,4 @@ package skyline_program
 
 import solanago "github.com/gagliardetto/solana-go"
 
-var ProgramID = solanago.MustPublicKeyFromBase58("691R9W7z3kor397HHeoFo3aqRG5w8AjUXjGXLtFTW5w6")
+var ProgramID = solanago.MustPublicKeyFromBase58("9r3WeS5AWMXnnt1vepkq8RkaTsR5RYtv7cgBRZ3fs6q3")

@@ -15,6 +15,13 @@ func ParseAnyEvent(eventData []byte) (any, error) {
 		return nil, fmt.Errorf("failed to peek event discriminator: %w", err)
 	}
 	switch discriminator {
+	case Event_BridgeRequestEvent:
+		value := new(BridgeRequestEvent)
+		err := value.UnmarshalWithDecoder(decoder)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal event as BridgeRequestEvent: %w", err)
+		}
+		return value, nil
 	case Event_TransactionExecutedEvent:
 		value := new(TransactionExecutedEvent)
 		err := value.UnmarshalWithDecoder(decoder)
@@ -32,6 +39,23 @@ func ParseAnyEvent(eventData []byte) (any, error) {
 	default:
 		return nil, fmt.Errorf("unknown discriminator: %s", binary.FormatDiscriminator(discriminator))
 	}
+}
+
+func ParseEvent_BridgeRequestEvent(eventData []byte) (*BridgeRequestEvent, error) {
+	decoder := binary.NewBorshDecoder(eventData)
+	discriminator, err := decoder.ReadDiscriminator()
+	if err != nil {
+		return nil, fmt.Errorf("failed to peek discriminator: %w", err)
+	}
+	if discriminator != Event_BridgeRequestEvent {
+		return nil, fmt.Errorf("expected discriminator %v, got %s", Event_BridgeRequestEvent, binary.FormatDiscriminator(discriminator))
+	}
+	event := new(BridgeRequestEvent)
+	err = event.UnmarshalWithDecoder(decoder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal event of type BridgeRequestEvent: %w", err)
+	}
+	return event, nil
 }
 
 func ParseEvent_TransactionExecutedEvent(eventData []byte) (*TransactionExecutedEvent, error) {

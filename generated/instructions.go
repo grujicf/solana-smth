@@ -16,15 +16,15 @@ import (
 func NewBridgeRequestInstruction(
 	// Params:
 	amountParam uint64,
-	receiverParam [57]uint8,
+	receiverParam []byte,
 	destinationChainParam uint8,
 
 	// Accounts:
 	signerAccount solanago.PublicKey,
+	validatorSetAccount solanago.PublicKey,
 	signersAtaAccount solanago.PublicKey,
 	vaultAccount solanago.PublicKey,
 	vaultAtaAccount solanago.PublicKey,
-	bridgingRequestAccount solanago.PublicKey,
 	mintAccount solanago.PublicKey,
 	tokenProgramAccount solanago.PublicKey,
 	systemProgramAccount solanago.PublicKey,
@@ -62,18 +62,18 @@ func NewBridgeRequestInstruction(
 		// Account 0 "signer": Writable, Signer, Required
 		// The user initiating the bridge request
 		accounts__.Append(solanago.NewAccountMeta(signerAccount, true, true))
-		// Account 1 "signers_ata": Writable, Non-signer, Required
+		// Account 1 "validator_set": Writable, Non-signer, Required
+		// The validator set account
+		accounts__.Append(solanago.NewAccountMeta(validatorSetAccount, true, false))
+		// Account 2 "signers_ata": Writable, Non-signer, Required
 		// The user's associated token account for the tokens being bridged
 		accounts__.Append(solanago.NewAccountMeta(signersAtaAccount, true, false))
-		// Account 2 "vault": Writable, Non-signer, Required
+		// Account 3 "vault": Writable, Non-signer, Required
 		// The vault account
 		accounts__.Append(solanago.NewAccountMeta(vaultAccount, true, false))
-		// Account 3 "vault_ata": Writable, Non-signer, Required
+		// Account 4 "vault_ata": Writable, Non-signer, Required
 		// The vault associated token account for the tokens being bridged
 		accounts__.Append(solanago.NewAccountMeta(vaultAtaAccount, true, false))
-		// Account 4 "bridging_request": Writable, Non-signer, Required
-		// The bridging request account to be created
-		accounts__.Append(solanago.NewAccountMeta(bridgingRequestAccount, true, false))
 		// Account 5 "mint": Writable, Non-signer, Required
 		// The token mint for the tokens being bridged
 		accounts__.Append(solanago.NewAccountMeta(mintAccount, true, false))
@@ -244,40 +244,6 @@ func NewBridgeVsuInstruction(
 		ProgramID,
 		accounts__,
 		buf__.Bytes(),
-	), nil
-}
-
-// Builds a "close_request" instruction.
-// Close a bridging request account. //  // This instruction closes a bridging request account, typically called after // the request has been processed or cancelled. Requires validator approval. //  // # Arguments // * `ctx` - The context containing accounts for closing the request //  // # Errors // * `NotEnoughSigners` - If insufficient validators have signed // * `InvalidSigner` - If a signer is not in the validator set
-func NewCloseRequestInstruction(
-	signerAccount solanago.PublicKey,
-	bridgingRequestAccount solanago.PublicKey,
-	validatorSetAccount solanago.PublicKey,
-	systemProgramAccount solanago.PublicKey,
-) (solanago.Instruction, error) {
-	accounts__ := solanago.AccountMetaSlice{}
-
-	// Add the accounts to the instruction.
-	{
-		// Account 0 "signer": Writable, Signer, Required
-		// The signer who will receive the rent from closing the account
-		accounts__.Append(solanago.NewAccountMeta(signerAccount, true, true))
-		// Account 1 "bridging_request": Writable, Non-signer, Required
-		// The bridging request account to be closed
-		accounts__.Append(solanago.NewAccountMeta(bridgingRequestAccount, true, false))
-		// Account 2 "validator_set": Read-only, Non-signer, Required
-		// The validator set account for consensus validation
-		accounts__.Append(solanago.NewAccountMeta(validatorSetAccount, false, false))
-		// Account 3 "system_program": Read-only, Non-signer, Required
-		// The system program for account closure
-		accounts__.Append(solanago.NewAccountMeta(systemProgramAccount, false, false))
-	}
-
-	// Create the instruction.
-	return solanago.NewInstruction(
-		ProgramID,
-		accounts__,
-		nil,
 	), nil
 }
 
