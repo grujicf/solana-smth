@@ -73,14 +73,14 @@ func Airdrop(keypairPath string) error {
 	return cmd.Wait()
 }
 
-func Deploy(feePayer string, programKey string, buildPath string) error {
+func Deploy(feePayer string, programKey string, buildPath string, cli *rpc.Client) error {
 	cmd := exec.Command("solana",
 		"program", "deploy",
 		"-u", "localhost",
 		"--fee-payer", feePayer,
 		"-k", programKey,
-		"--commitment", "finalized",
-		buildPath)
+		buildPath,
+		"--commitment", "finalized")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -88,7 +88,12 @@ func Deploy(feePayer string, programKey string, buildPath string) error {
 		return fmt.Errorf("failed to deploy: %w", err)
 	}
 
-	return cmd.Wait()
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("failed to deploy: %w", err)
+	}
+
+	time.Sleep(20 * time.Second)
+	return nil
 }
 
 func CreateTokenAccount(cli *rpc.Client, wsCli *ws.Client, pk solana.PrivateKey, mintAuthority solana.PublicKey) (*solana.PublicKey, error) {
@@ -265,13 +270,12 @@ func main() {
 
 	fmt.Println(res.Value)
 
-	if err := Deploy("./test.json", "./skyline_program-keypair.json", "./skyline_program.so"); err != nil {
+	if err := Deploy("./test.json", "./skyline_program-keypair.json", "./skyline_program.so", cli); err != nil {
 		fmt.Println("OVDE", err)
 		return
 	}
 
-	time.Sleep(time.Second * 20)
-
+	fmt.Println("GOTOV SAM")
 	// sub1, err := wsCli.LogsSubscribeMentions(skyline_program.ProgramID, rpc.CommitmentFinalized)
 	// if err != nil {
 	// 	fmt.Println("MJAU3", err)
@@ -322,14 +326,15 @@ func main() {
 		return
 	}
 
-	res1, err := cli.GetAccountInfo(context.TODO(), programPk.PublicKey())
+	res1, err := cli.GetAccountInfoWithOpts(context.TODO(), programPk.PublicKey(), &rpc.GetAccountInfoOpts{
+		Commitment: rpc.CommitmentFinalized,
+	})
 	if err != nil {
 		fmt.Println("OVDE 3:", err)
 		return
 	}
 
 	fmt.Println(res1.Value.Executable)
-
 	fmt.Println("Executable:", res1.Value.Executable)
 	fmt.Println("Owner:     ", res1.Value.Owner)
 	fmt.Println(res1.Value)
@@ -464,125 +469,129 @@ func main() {
 		return
 	}
 
-	for i := range 5 {
-		buf := make([]byte, 8)
-		binary.LittleEndian.PutUint64(buf, uint64(2+i))
-		fmt.Println("BUF", buf)
+	// for i := range 5 {
+	// 	buf := make([]byte, 8)
+	// 	binary.LittleEndian.PutUint64(buf, uint64(2+i))
+	// 	fmt.Println("BUF", buf)
 
-		pdaBridgingTx, _, err := solana.FindProgramAddress([][]byte{skyline_program.BRIDGING_TRANSACTION_SEED, buf}, skyline_program.ProgramID)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+	// 	pdaBridgingTx, _, err := solana.FindProgramAddress([][]byte{skyline_program.BRIDGING_TRANSACTION_SEED, buf}, skyline_program.ProgramID)
+	// 	if err != nil {
+	// 		fmt.Println(err)
+	// 		return
+	// 	}
 
-		fmt.Println("Saljem request sa ID-em", 2+i)
-		ins, err := skyline_program.NewBridgeTransactionInstruction(1_000,
-			uint64(2+i),
-			pk.PublicKey(),
-			pdaVS,
-			pdaBridgingTx,
-			*mint,
-			pera.PublicKey(),
-			perinAta,
-			pdaVault,
-			ata,
-			solana.TokenProgramID,
-			solana.SystemProgramID,
-			solana.SPLAssociatedTokenAccountProgramID,
-		)
+	// 	fmt.Println("Saljem request sa ID-em", 2+i)
+	// 	ins, err := skyline_program.NewBridgeTransactionInstruction(1_000,
+	// 		uint64(2+i),
+	// 		pk.PublicKey(),
+	// 		pdaVS,
+	// 		pdaBridgingTx,
+	// 		*mint,
+	// 		pera.PublicKey(),
+	// 		perinAta,
+	// 		pdaVault,
+	// 		ata,
+	// 		solana.TokenProgramID,
+	// 		solana.SystemProgramID,
+	// 		solana.SPLAssociatedTokenAccountProgramID,
+	// 	)
+	// 	if err != nil {
+	// 		fmt.Println("Error creating bridge transaction instruction:", err)
+	// 		return
+	// 	}
 
-		var accounts []*solana.AccountMeta
-		accounts = append(accounts, ins.Accounts()...)
-		for _, v := range vals {
-			accounts = append(accounts, &solana.AccountMeta{
-				PublicKey:  v.PublicKey(),
-				IsSigner:   true,
-				IsWritable: false,
-			})
-		}
+	// 	var accounts []*solana.AccountMeta
+	// 	accounts = append(accounts, ins.Accounts()...)
+	// 	for _, v := range vals {
+	// 		accounts = append(accounts, &solana.AccountMeta{
+	// 			PublicKey:  v.PublicKey(),
+	// 			IsSigner:   true,
+	// 			IsWritable: false,
+	// 		})
+	// 	}
 
-		data, err := ins.Data()
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+	// 	data, err := ins.Data()
+	// 	if err != nil {
+	// 		fmt.Println(err)
+	// 		return
+	// 	}
 
-		ix := solana.NewInstruction(skyline_program.ProgramID, accounts, data)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+	// 	ix := solana.NewInstruction(skyline_program.ProgramID, accounts, data)
+	// 	if err != nil {
+	// 		fmt.Println(err)
+	// 		return
+	// 	}
 
-		blockhash, err := cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+	// 	blockhash, err := cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
+	// 	if err != nil {
+	// 		fmt.Println(err)
+	// 		return
+	// 	}
 
-		builder := solana.NewTransactionBuilder().SetRecentBlockHash(blockhash.Value.Blockhash).SetFeePayer(pk.PublicKey()).AddInstruction(ix)
+	// 	builder := solana.NewTransactionBuilder().SetRecentBlockHash(blockhash.Value.Blockhash).SetFeePayer(pk.PublicKey()).AddInstruction(ix)
 
-		tx, err = builder.Build()
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+	// 	tx, err = builder.Build()
+	// 	if err != nil {
+	// 		fmt.Println(err)
+	// 		return
+	// 	}
 
-		signers := map[solana.PublicKey]*solana.PrivateKey{}
+	// 	signers := map[solana.PublicKey]*solana.PrivateKey{}
 
-		// fee payer
-		signers[pk.PublicKey()] = &pk
+	// 	// fee payer
+	// 	signers[pk.PublicKey()] = &pk
 
-		// validatori
-		for _, v := range vals {
-			signers[v.PublicKey()] = &v.PrivateKey
-		}
+	// 	// validatori
+	// 	for _, v := range vals {
+	// 		signers[v.PublicKey()] = &v.PrivateKey
+	// 	}
 
-		mshSer, err := tx.Message.MarshalBinary()
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		hash := sha256.Sum256(mshSer)
+	// 	mshSer, err := tx.Message.MarshalBinary()
+	// 	if err != nil {
+	// 		fmt.Println(err)
+	// 		return
+	// 	}
+	// 	hash := sha256.Sum256(mshSer)
 
-		fmt.Println("SHA256:", hex.EncodeToString(hash[:]))
+	// 	fmt.Println("SHA256:", hex.EncodeToString(hash[:]))
 
-		_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
-			return signers[key]
-		})
-		if err != nil {
-			fmt.Println("POTPIS FAIL", err)
-			return
-		}
+	// 	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+	// 		return signers[key]
+	// 	})
+	// 	if err != nil {
+	// 		fmt.Println("POTPIS FAIL", err)
+	// 		return
+	// 	}
 
-		sig, err = cli.SendTransaction(context.TODO(), tx)
-		if err != nil {
-			fmt.Println("MJAU1", err)
-			return
-		}
+	// 	sig, err = cli.SendTransaction(context.TODO(), tx)
+	// 	if err != nil {
+	// 		fmt.Println("MJAU1", err)
+	// 		return
+	// 	}
 
-		sub, err = wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
-		if err != nil {
-			fmt.Println("MJAU2", err)
-			return
-		}
-		defer sub.Unsubscribe()
+	// 	sub, err = wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
+	// 	if err != nil {
+	// 		fmt.Println("MJAU2", err)
+	// 		return
+	// 	}
+	// 	defer sub.Unsubscribe()
 
-		result = <-sub.Response()
-		if result.Value.Err != nil {
-			err = fmt.Errorf("send tx failed: %v", result.Value.Err)
-			return
-		}
+	// 	result = <-sub.Response()
+	// 	if result.Value.Err != nil {
+	// 		err = fmt.Errorf("send tx failed: %v", result.Value.Err)
+	// 		return
+	// 	}
 
-		balance, err = cli.GetTokenAccountBalance(ctx, perinAta, rpc.CommitmentFinalized)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+	// 	balance, err = cli.GetTokenAccountBalance(ctx, perinAta, rpc.CommitmentFinalized)
+	// 	if err != nil {
+	// 		fmt.Println(err)
+	// 		return
+	// 	}
 
-		fmt.Println("PERIN Vault ATA:", perinAta)
-		fmt.Println("PERIN Vault balance:", balance.Value.Amount)
-		time.Sleep(2 * time.Second)
-	}
+	// 	fmt.Println("PERIN Vault ATA:", perinAta)
+	// 	fmt.Println("PERIN Vault balance:", balance.Value.Amount)
+	// 	time.Sleep(2 * time.Second)
+	// }
 
 	fmt.Println("DIREKTNO MINT")
 	mint2, err := CreateTokenAccount(cli, wsCli, pk, pdaVault)
@@ -705,7 +714,7 @@ func main() {
 
 	result = <-sub.Response()
 	if result.Value.Err != nil {
-		err = fmt.Errorf("send tx failed: %v", result.Value.Err)
+		fmt.Println("send tx failed:", result.Value.Err)
 		return
 	}
 
@@ -718,6 +727,85 @@ func main() {
 	fmt.Println("MIKIN Vault ATA:", mikinAta)
 	fmt.Println("MIKIN Vault balance:", balance.Value.Amount)
 	time.Sleep(10 * time.Second)
+	sig, err = cli.RequestAirdrop(ctx, pera.PublicKey(), 10000000000, rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println("Error requesting airdrop:", err)
+		return
+	}
+
+	_, err = MintToAccount(cli, wsCli, pk, pera.PublicKey(), *mint)
+	if err != nil {
+		fmt.Println("Error minting to account:", err)
+		return
+	}
+
+	balance, err = cli.GetTokenAccountBalance(ctx, perinAta, rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println("PERIN Vault ATA after mint:", perinAta)
+	fmt.Println("PERIN Vault balance after mint:", balance.Value.Amount)
+
+	brIx, err := skyline_program.NewBridgeRequestInstruction(100, []byte("aezakmi"), 1, pera.PublicKey(), pdaVS, perinAta,
+		pdaVault, ata, *mint, solana.TokenProgramID, solana.SystemProgramID, solana.SPLAssociatedTokenAccountProgramID)
+	if err != nil {
+		fmt.Println("Error creating bridge request instruction:", err)
+		return
+	}
+
+	blockhash, err = cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println("Error getting blockhash:", err)
+		return
+	}
+
+	tx, err = solana.NewTransactionBuilder().AddInstruction(brIx).SetFeePayer(pera.PublicKey()).SetRecentBlockHash(blockhash.Value.Blockhash).Build()
+	if err != nil {
+		fmt.Println("Error building transaction:", err)
+		return
+	}
+
+	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		if key.Equals(pera.PublicKey()) {
+			return &pera.PrivateKey
+		}
+		return nil
+	})
+	if err != nil {
+		fmt.Println("Error signing transaction:", err)
+		return
+	}
+
+	sig, err = cli.SendTransaction(context.TODO(), tx)
+	if err != nil {
+		fmt.Println("Error sending transaction:", err)
+		return
+	}
+
+	sub, err = wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println("Error subscribing to signature:", err)
+		return
+	}
+	defer sub.Unsubscribe()
+
+	result = <-sub.Response()
+	if result.Value.Err != nil {
+		fmt.Println("send tx failed:", result.Value.Err)
+		return
+	}
+
+	fmt.Println("Bridge request sent successfully")
+
+	blockhash, err = cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println("Error getting blockhash:", err)
+		return
+	}
+
+	fmt.Println("BLOCKNUM", blockhash.Value.LastValidBlockHeight)
 
 	f, err := os.OpenFile(
 		"output.txt",
@@ -831,6 +919,10 @@ func processBlock(block *rpc.GetBlockResult, slot uint64, f *os.File) {
 					if !strings.Contains(log, "Program data: ") {
 						continue
 					}
+
+					log = strings.ReplaceAll(log, "=", "")
+
+					f.WriteString(fmt.Sprintf("BASE 64: %s", log[14:]))
 
 					decoded, err := base64.RawStdEncoding.DecodeString(log[14:])
 					if err != nil {
