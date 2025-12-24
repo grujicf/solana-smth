@@ -639,6 +639,10 @@ func main() {
 		solana.SystemProgramID,
 		solana.SPLAssociatedTokenAccountProgramID,
 	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
 	var accounts []*solana.AccountMeta
 	accounts = append(accounts, ins.Accounts()...)
@@ -727,7 +731,7 @@ func main() {
 	fmt.Println("MIKIN Vault ATA:", mikinAta)
 	fmt.Println("MIKIN Vault balance:", balance.Value.Amount)
 	time.Sleep(10 * time.Second)
-	sig, err = cli.RequestAirdrop(ctx, pera.PublicKey(), 10000000000, rpc.CommitmentFinalized)
+	_, err = cli.RequestAirdrop(ctx, pera.PublicKey(), 10000000000, rpc.CommitmentFinalized)
 	if err != nil {
 		fmt.Println("Error requesting airdrop:", err)
 		return
@@ -806,6 +810,109 @@ func main() {
 	}
 
 	fmt.Println("BLOCKNUM", blockhash.Value.LastValidBlockHeight)
+
+	newValidator := solana.NewWallet()
+
+	buf = make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, uint64(31))
+
+	pdaVSC, _, err := solana.FindProgramAddress([][]byte{skyline_program.VALIDATOR_SET_CHANGE_SEED, buf}, skyline_program.ProgramID)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println("PDA VSC:", pdaVSC.String())
+	fmt.Println("PDA VS:", pdaVS.String())
+	fmt.Println("PK:", pk.PublicKey().String())
+
+	vsIx, err := skyline_program.NewBridgeVsuInstruction(
+		[]solana.PublicKey{newValidator.PublicKey()},
+		[]uint64{},
+		31,
+		pk.PublicKey(),
+		pdaVS,
+		pdaVSC,
+		solana.SystemProgramID,
+	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	data, err = vsIx.Data()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	accounts = vsIx.Accounts()
+
+	for _, v := range vals {
+		accounts = append(accounts, &solana.AccountMeta{
+			PublicKey:  v.PublicKey(),
+			IsSigner:   true,
+			IsWritable: false,
+		})
+	}
+	ix = solana.NewInstruction(skyline_program.ProgramID, accounts, data)
+
+	blockhash, err = cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	builder = solana.NewTransactionBuilder().SetRecentBlockHash(blockhash.Value.Blockhash).SetFeePayer(pk.PublicKey()).AddInstruction(ix)
+	tx, err = builder.Build()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		return signers[key]
+	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	sig, err = cli.SendTransaction(context.TODO(), tx)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	sub, err = wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer sub.Unsubscribe()
+
+	result = <-sub.Response()
+	if result.Value.Err != nil {
+		fmt.Println("send tx failed:", result.Value.Err)
+		return
+	}
+
+	fmt.Println("Validator set updated successfully")
+
+	resp, err = cli.GetAccountInfo(context.TODO(), pdaVS)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	newVS, err := skyline_program.UnmarshalValidatorSet(resp.GetBinary()[8:])
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println("New validator set:", newVS)
 
 	f, err := os.OpenFile(
 		"output.txt",
