@@ -251,6 +251,8 @@ func main() {
 	}
 	defer wsCli.Close()
 
+	solanaCli := NewSolanaClient(cli, wsCli)
+
 	if err := Airdrop("./test.json"); err != nil {
 		fmt.Println(err)
 		return
@@ -361,7 +363,7 @@ func main() {
 		return
 	}
 
-	a, err := skyline_program.NewInitializeInstruction(
+	initIx, err := skyline_program.NewInitializeInstruction(
 		valsPKs,
 		new(uint64),
 		pk.PublicKey(),
@@ -378,46 +380,51 @@ func main() {
 		return
 	}
 
-	latest, err := cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
-	if err != nil {
-		fmt.Println("OVDE2", err)
-		return
-	}
-
-	b := solana.NewTransactionBuilder().AddInstruction(a)
-	b.SetRecentBlockHash(latest.Value.Blockhash)
-	b.SetFeePayer(pk.PublicKey())
-	tx, err := b.Build()
-	if err != nil {
-		fmt.Print("OVDE3", err)
-		return
-	}
-
-	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
-		return &pk
-	})
-
-	if err != nil {
+	if _, err := solanaCli.ExecuteInstruction(&initIx, map[solana.PublicKey]*solana.PrivateKey{}, pk); err != nil {
 		fmt.Println("OVDE4", err)
 		return
 	}
 
-	sig, err := cli.SendTransaction(context.TODO(), tx)
-	if err != nil {
-		fmt.Println("OVDE JE GRESKA MJAU:", err)
-		return
-	}
-	sub, err := wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
-	if err != nil {
-		fmt.Println("Subscription error:", err)
-		return
-	}
+	// latest, err := cli.GetLatestBlockhash(context.TODO(), rpc.CommitmentFinalized)
+	// if err != nil {
+	// 	fmt.Println("OVDE2", err)
+	// 	return
+	// }
 
-	result := <-sub.Response()
-	if result.Value.Err != nil {
-		fmt.Println("Transaction failed:", result.Value.Err)
-		return
-	}
+	// b := solana.NewTransactionBuilder().AddInstruction(initIx)
+	// b.SetRecentBlockHash(latest.Value.Blockhash)
+	// b.SetFeePayer(pk.PublicKey())
+	// tx, err := b.Build()
+	// if err != nil {
+	// 	fmt.Print("OVDE3", err)
+	// 	return
+	// }
+
+	// _, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+	// 	return &pk
+	// })
+
+	// if err != nil {
+	// 	fmt.Println("OVDE4", err)
+	// 	return
+	// }
+
+	// sig, err := cli.SendTransaction(context.TODO(), tx)
+	// if err != nil {
+	// 	fmt.Println("OVDE JE GRESKA MJAU:", err)
+	// 	return
+	// }
+	// sub, err := wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
+	// if err != nil {
+	// 	fmt.Println("Subscription error:", err)
+	// 	return
+	// }
+
+	// result := <-sub.Response()
+	// if result.Value.Err != nil {
+	// 	fmt.Println("Transaction failed:", result.Value.Err)
+	// 	return
+	// }
 
 	resp, err := cli.GetAccountInfo(context.TODO(), pdaVS)
 	if err != nil {
@@ -670,7 +677,7 @@ func main() {
 
 	builder := solana.NewTransactionBuilder().SetRecentBlockHash(blockhash.Value.Blockhash).SetFeePayer(pk.PublicKey()).AddInstruction(ix)
 
-	tx, err = builder.Build()
+	tx, err := builder.Build()
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -703,20 +710,20 @@ func main() {
 		return
 	}
 
-	sig, err = cli.SendTransaction(context.TODO(), tx)
+	sig, err := cli.SendTransaction(context.TODO(), tx)
 	if err != nil {
 		fmt.Println("MJAU1", err)
 		return
 	}
 
-	sub, err = wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
+	sub, err := wsCli.SignatureSubscribe(sig, rpc.CommitmentFinalized)
 	if err != nil {
 		fmt.Println("MJAU2", err)
 		return
 	}
 	defer sub.Unsubscribe()
 
-	result = <-sub.Response()
+	result := <-sub.Response()
 	if result.Value.Err != nil {
 		fmt.Println("send tx failed:", result.Value.Err)
 		return
